@@ -39,17 +39,18 @@ typedef struct gc_heap
 #define PTRSIZE ((size_t) sizeof(void *))
 #define HEADER_SIZE ((size_t) sizeof(Header))
 #define HEAP_LIMIT 10000
-#define ALIGN(x,a) (((x) + (a - 1)) & ~(a - 1))
+#define ALIGN(x,a) (((x) + ((a) - 1)) & ~((a) - 1))
 #define NEXT_HEADER(x) ((Header *)((size_t)(x+1) + x->size))
 
 /* flags */
-#define FL_ALLOC 0x1
-#define FL_MARK 0x2
+#define FL_ALLOC ((size_t)0x1)
+#define FL_MARK ((size_t)0x2)
+
 #define FL_SET(x, f) (((Header *)x)->flags |= f)
 #define FL_UNSET(x, f) (((Header *)x)->flags &= ~(f))
 #define FL_TEST(x, f) (((Header *)x)->flags & f)
 
-static Header* free_list;
+static Header* free_list = NULL;
 static GC_Heap gc_heaps[HEAP_LIMIT];
 static size_t gc_heaps_used = 0;
 
