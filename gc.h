@@ -3,6 +3,7 @@
 
 void mini_gc_free(void* ptr);
 void* mini_gc_malloc(size_t req_size);
+void* mini_gc_realloc(void* ptr, size_t req_size);
 
 void garbage_collect(void);
 void gc_init(void);

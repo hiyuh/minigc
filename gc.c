@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <setjmp.h>
+#include <string.h>
 #include "gc.h"
 
 /* ========================================================================== */
@@ -171,6 +172,32 @@ mini_gc_malloc(size_t req_size)
             }
         }
     }
+}
+
+void*
+mini_gc_realloc(void* ptr, size_t req_size)
+{
+    Header* hdr = NULL;
+    void*   p   = NULL;
+
+    p = (void*)mini_gc_malloc(req_size);
+
+    if(ptr != NULL)
+    {
+        hdr = (Header*)ptr - 1;
+
+        if(hdr->size > req_size)
+        {
+            memcpy(p, ptr, req_size);
+        }
+        else
+        {
+            memcpy(p, ptr, hdr->size);
+        }
+        /* mini_gc_free(ptr); */
+    }
+
+    return p;
 }
 
 void
