@@ -75,11 +75,15 @@ add_heap(size_t req_size)
         return NULL;
     }
 
+    memset(p, 0, req_size + PTRSIZE + HEADER_SIZE);
+
     /* address alignment */
     align_p = gc_heaps[gc_heaps_used].slot = (Header*)ALIGN((size_t)p, PTRSIZE);
     req_size = gc_heaps[gc_heaps_used].size = req_size;
     align_p->size = req_size;
     align_p->next_free = align_p;
+    align_p->flags = 0;
+
     gc_heaps_used++;
 
     return align_p;
@@ -122,24 +126,34 @@ mini_gc_malloc(size_t req_size)
     }
     for (p = prevp->next_free; ; prevp = p, p = p->next_free)
     {
-        if (p->size >= req_size)
+        if (p->size == req_size)
+            /* just fit */
         {
-            if (p->size == req_size)
-                /* just fit */
-            {
-                prevp->next_free = p->next_free;
-            }
-            else
-            {
-                /* too big */
-                p->size -= (req_size + HEADER_SIZE);
-                p = NEXT_HEADER(p);
-                p->size = req_size;
-            }
+            prevp->next_free = p->next_free;
+
             free_list = prevp;
             FL_SET(p, FL_ALLOC);
+
+            p->next_free = 0;
+
             return (void*)(p + 1);
         }
+        else if(p->size > (req_size + HEADER_SIZE))
+        {
+            p->size -= (req_size + HEADER_SIZE);
+
+            p = NEXT_HEADER(p);
+            memset(p, 0, HEADER_SIZE + req_size);
+            p->size = req_size;
+
+            free_list = prevp;
+            FL_SET(p, FL_ALLOC);
+
+            p->next_free = 0;
+
+            return (void*)(p + 1);
+        }
+
         if (p == free_list)
         {
             if (!do_gc)
