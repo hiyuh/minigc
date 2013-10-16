@@ -76,10 +76,17 @@ add_heap(size_t req_size)
         req_size += HEADER_SIZE;
     }
 
+#ifdef WIN32
+    if((p = (void*)malloc(req_size + PTRSIZE + HEADER_SIZE)) == NULL)
+    {
+        return NULL;
+    }
+#else
     if((p = sbrk(req_size + PTRSIZE + HEADER_SIZE)) == (void*) - 1)
     {
         return NULL;
     }
+#endif  /* WIN32 */
 
     memset(p, 0, req_size + PTRSIZE + HEADER_SIZE);
 
