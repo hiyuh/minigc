@@ -69,6 +69,10 @@ add_heap(size_t req_size)
     {
         req_size = TINY_HEAP_SIZE;
     }
+    else
+    {
+        req_size += HEADER_SIZE;
+    }
 
     if((p = sbrk(req_size + PTRSIZE + HEADER_SIZE)) == (void*) - 1)
     {
@@ -80,7 +84,7 @@ add_heap(size_t req_size)
     /* address alignment */
     align_p = gc_heaps[gc_heaps_used].slot = (Header*)ALIGN((size_t)p, PTRSIZE);
     req_size = gc_heaps[gc_heaps_used].size = req_size;
-    align_p->size = req_size;
+    align_p->size = (req_size - HEADER_SIZE);
     align_p->next_free = align_p;
     align_p->flags = 0;
 
