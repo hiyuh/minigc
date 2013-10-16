@@ -1,18 +1,41 @@
 #
 CC = gcc
-SRCS = gc.c main.c
-BIN = gc
+AR = ar
 
-all: clean gc
+ifdef DEBUG
+CFLAGS = -g -DDO_DEBUG
+else
+CFLAGS = -O0
+endif
+
+LDFLAGS = -L.
+ARFLAGS = -r
+
+SRCS = gc.c
+OBJS = $(SRCS:.c=.o)
+
+BIN = gc
+LIB = libgc.a
+
+all: clean $(BIN)
 
 clean:
-	rm -f gc
+	-rm -f *.o
+	-rm -f $(LIB)
+	-rm -f $(BIN)
 
-gc: $(SRCS)
-	$(CC) -g -o gc $(SRCS)
+lib: $(LIB)
 
-gc_debug:
-	$(CC) -g -DDO_DEBUG -O0 -o gc $(SRCS)
+.c.o:
+	$(CC) $(CFLAGS) -c $<
 
-test: clean gc_debug
-	./gc test
+$(LIB): $(OBJS)
+	$(AR) $(ARFLAGS) $@ $?
+
+$(BIN): main.o $(LIB)
+	$(CC) $(LDFLAGS) -o $@ $< -lgc
+
+test: $(BIN)
+	./$(BIN) test
+
+.PHONY: clean lib
