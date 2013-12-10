@@ -55,6 +55,7 @@ static GC_Heap gc_heaps[HEAP_LIMIT];
 static size_t gc_heaps_used = 0;
 
 static void mini_gc_join_freelist(Header* target);
+static GC_Heap* is_pointer_to_heap(void* ptr);
 
 static Header*
 add_heap(size_t req_size)
@@ -216,6 +217,13 @@ mini_gc_free(void* ptr)
     Header* target = NULL;
 
     target = (Header*)ptr - 1;
+
+    /* check if ptr is valid */
+    if(!is_pointer_to_heap(ptr) ||
+       !FL_TEST(target, FL_ALLOC))
+    {
+        return;
+    }
 
     mini_gc_join_freelist(target);
 
