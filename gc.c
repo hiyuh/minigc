@@ -54,6 +54,7 @@ static Header* free_list = NULL;
 static GC_Heap gc_heaps[HEAP_LIMIT];
 static size_t gc_heaps_used = 0;
 
+static void mini_gc_join_freelist(Header* target);
 
 static Header*
 add_heap(size_t req_size)
@@ -113,7 +114,8 @@ grow(size_t req_size)
     }
 
     up = (Header*) cp;
-    mini_gc_free((void*)(up + 1));
+    mini_gc_join_freelist(up);
+
     return free_list;
 }
 
@@ -211,9 +213,19 @@ mini_gc_realloc(void* ptr, size_t req_size)
 void
 mini_gc_free(void* ptr)
 {
-    Header* target, *hit;
+    Header* target = NULL;
 
     target = (Header*)ptr - 1;
+
+    mini_gc_join_freelist(target);
+
+    target->flags = 0;
+}
+
+static void
+mini_gc_join_freelist(Header* target)
+{
+    Header* hit = NULL;
 
     /* search join point of target to free_list */
     for (hit = free_list; !(target > hit && target < hit->next_free); hit = hit->next_free)
@@ -246,12 +258,9 @@ mini_gc_free(void* ptr)
         /* join before free block */
         hit->next_free = target;
     }
+
     free_list = hit;
-    target->flags = 0;
 }
-
-
-
 
 /* ========================================================================== */
 /*  mini_gc                                                                   */
