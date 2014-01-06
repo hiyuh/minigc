@@ -6,6 +6,8 @@ AC_CONFIG_HEADERS([config.h])
 
 AC_PROG_CC
 
+AC_EXEEXT
+
 AC_CHECK_HEADERS([assert.h errno.h setjmp.h stdbool.h stdio.h \
                   stdlib.h string.h unistd.h], [],
                  [AC_MSG_ERROR(one of mandatory headers not found)])
