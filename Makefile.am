@@ -1,2 +1,3 @@
+AM_CFLAGS = -DDO_DEBUG -DDO_TEST
 bin_PROGRAMS = gc
-gc_SOURCES = main.c gc.c
+gc_SOURCES = gc.c

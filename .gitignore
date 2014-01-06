@@ -1,5 +1,6 @@
 gc
 *.exe
+*.exe.stackdump
 *.o
 
 .deps/
