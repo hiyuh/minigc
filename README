@@ -10,5 +10,5 @@ This is a simple and minimum GC. The purpose of this project is education.
 
 = Usage
 
-    $ make
+    $ make -f Makefile.orig
     $ ./gc test
