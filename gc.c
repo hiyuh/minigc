@@ -35,7 +35,12 @@ typedef struct gc_heap
     size_t size;
 } GC_Heap;
 
+#ifdef __i386__
 #define TINY_HEAP_SIZE 0x4000
+#endif
+#ifdef __x86_64__
+#define TINY_HEAP_SIZE 0x8004
+#endif
 #define PTRSIZE ((size_t) sizeof(void *))
 #define HEADER_SIZE ((size_t) sizeof(Header))
 #define HEAP_LIMIT 10000
