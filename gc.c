@@ -19,7 +19,7 @@
 #include "gc.h"
 
 /* ========================================================================== */
-/*  mini_gc_malloc                                                            */
+/*  minigc_malloc                                                            */
 /* ========================================================================== */
 
 typedef struct header {
@@ -57,7 +57,7 @@ static Header *free_list = NULL;
 static GC_Heap gc_heaps[HEAP_LIMIT];
 static size_t gc_heaps_used = 0;
 
-static void mini_gc_join_freelist(Header * target);
+static void minigc_join_freelist(Header * target);
 static GC_Heap *is_pointer_to_heap(void *ptr);
 
 static Header *add_heap(size_t req_size)
@@ -110,12 +110,12 @@ static Header *grow(size_t req_size)
 	}
 
 	up = (Header *) cp;
-	mini_gc_join_freelist(up);
+	minigc_join_freelist(up);
 
 	return free_list;
 }
 
-void *mini_gc_malloc(size_t req_size)
+void *minigc_malloc(size_t req_size)
 {
 	Header *p, *prevp;
 	size_t do_gc = 0;
@@ -169,12 +169,12 @@ void *mini_gc_malloc(size_t req_size)
 	}
 }
 
-void *mini_gc_realloc(void *ptr, size_t req_size)
+void *minigc_realloc(void *ptr, size_t req_size)
 {
 	Header *hdr = NULL;
 	void *p = NULL;
 
-	p = (void *)mini_gc_malloc(req_size);
+	p = (void *)minigc_malloc(req_size);
 
 	if (ptr != NULL) {
 		hdr = (Header *) ptr - 1;
@@ -184,13 +184,13 @@ void *mini_gc_realloc(void *ptr, size_t req_size)
 		} else {
 			memcpy(p, ptr, hdr->size);
 		}
-		/* mini_gc_free(ptr); */
+		/* minigc_free(ptr); */
 	}
 
 	return p;
 }
 
-void mini_gc_free(void *ptr)
+void minigc_free(void *ptr)
 {
 	Header *target = NULL;
 
@@ -201,12 +201,12 @@ void mini_gc_free(void *ptr)
 		return;
 	}
 
-	mini_gc_join_freelist(target);
+	minigc_join_freelist(target);
 
 	target->flags = 0;
 }
 
-static void mini_gc_join_freelist(Header * target)
+static void minigc_join_freelist(Header * target)
 {
 	Header *hit = NULL;
 
@@ -240,7 +240,7 @@ static void mini_gc_join_freelist(Header * target)
 }
 
 /* ========================================================================== */
-/*  mini_gc                                                                   */
+/*  minigc                                                                   */
 /* ========================================================================== */
 
 struct root_range {
@@ -387,7 +387,7 @@ static void gc_sweep(void)
 					DEBUG(printf("mark unset : %p\n", p));
 					FL_UNSET(p, FL_MARK);
 				} else {
-					mini_gc_free(p + 1);
+					minigc_free(p + 1);
 				}
 			}
 		}
@@ -434,40 +434,40 @@ void garbage_collect(void)
 /* test                                                                       */
 /* ========================================================================== */
 
-static void test_mini_gc_malloc_free(void)
+static void test_minigc_malloc_free(void)
 {
 	void *p1, *p2, *p3;
 
 	/* malloc check */
-	p1 = (void *)mini_gc_malloc(10);
-	p2 = (void *)mini_gc_malloc(10);
-	p3 = (void *)mini_gc_malloc(10);
+	p1 = (void *)minigc_malloc(10);
+	p2 = (void *)minigc_malloc(10);
+	p3 = (void *)minigc_malloc(10);
 	assert(((Header *) p1 - 1)->size == ALIGN(10, PTRSIZE));
 	assert(((Header *) p1 - 1)->flags == FL_ALLOC);
 	assert((Header *) (((size_t) (free_list + 1)) + free_list->size) ==
 	       ((Header *) p3 - 1));
 
 	/* free check */
-	mini_gc_free(p1);
-	mini_gc_free(p3);
-	mini_gc_free(p2);
+	minigc_free(p1);
+	minigc_free(p3);
+	minigc_free(p2);
 	assert(free_list->next_free == free_list);
 	assert((void *)gc_heaps[0].slot == (void *)free_list);
 	//FIXME: assert(gc_heaps[0].size == TINY_HEAP_SIZE);
 	assert(((Header *) p1 - 1)->flags == 0);
 
 	/* grow check */
-	p1 = mini_gc_malloc(0x4000 + 80);
+	p1 = minigc_malloc(0x4000 + 80);
 	assert(gc_heaps_used == 2);
 	//FIXME: assert(gc_heaps[1].size == (TINY_HEAP_SIZE + 80));
-	mini_gc_free(p1);
+	minigc_free(p1);
 }
 
 static void test_garbage_collect(void)
 {
 	void *p;
 
-	p = mini_gc_malloc(100);
+	p = minigc_malloc(100);
 	assert(FL_TEST((((Header *) p) - 1), FL_ALLOC));
 	p = 0;
 	garbage_collect();
@@ -479,7 +479,7 @@ static void test_garbage_collect_load_test(void)
 	int i;
 
 	for (i = 0; i < 2000; i++) {
-		p = mini_gc_malloc(100);
+		p = minigc_malloc(100);
 	}
 	assert((((Header *) p) - 1)->flags);
 	assert(stack_end != stack_start);
@@ -489,7 +489,7 @@ static void test(void)
 {
 	gc_init();
 
-	test_mini_gc_malloc_free();
+	test_minigc_malloc_free();
 	test_garbage_collect();
 	test_garbage_collect_load_test();
 }
