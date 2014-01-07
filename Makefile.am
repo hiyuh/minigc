@@ -1,9 +1,9 @@
 AM_CFLAGS = -DDO_DEBUG -DDO_TEST
 
-bin_PROGRAMS = gc
-gc_SOURCES = gc.c
+bin_PROGRAMS = minigc
+minigc_SOURCES = minigc.c
 
 .PHONY: test
 
-test: gc$(EXEEXT)
-	./gc test
+test: minigc$(EXEEXT)
+	./minigc test

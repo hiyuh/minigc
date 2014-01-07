@@ -16,7 +16,7 @@
 #include <unistd.h>
 #include <setjmp.h>
 #include <string.h>
-#include "gc.h"
+#include "minigc.h"
 
 /* ========================================================================== */
 /*  minigc_malloc                                                            */
