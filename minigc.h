@@ -1,5 +1,5 @@
-#ifndef _MINI_GC
-#define _MINI_GC
+#if defined(_MINIGC_H)
+#define _MINIGC_H
 
 void minigc_free(void *ptr);
 void *minigc_malloc(size_t req_size);
