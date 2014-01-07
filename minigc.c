@@ -1,11 +1,12 @@
-#ifdef DO_DEBUG
-#define DEBUG(exp) (exp)
-#else
-#define DEBUG(exp)
+#if defined(HAVE_CONFIG_H)
+#include "config.h"
 #endif
 
-#ifndef DO_DEBUG
+#if defined(DO_DEBUG)
+#define DEBUG(exp) (exp)
+#else
 #define NDEBUG
+#define DEBUG(exp)
 #endif
 
 #include <stdio.h>
@@ -18,54 +19,47 @@
 #include <string.h>
 #include "minigc.h"
 
-/* ========================================================================== */
-/*  minigc_malloc                                                            */
-/* ========================================================================== */
-
 typedef struct header {
 	size_t flags;
 	size_t size;
 	struct header *next_free;
-} Header;
+} header_t;
 
-typedef struct gc_heap {
-	Header *slot;
+typedef struct heap {
+	header_t *slot;
 	size_t size;
-} GC_Heap;
+} heap_t;
 
-#ifdef __i386__
+// FIXME: Set default on configure.
+// FIXME: Enable runtime tuning on init.
 #define TINY_HEAP_SIZE 0x4000
-#endif
-#ifdef __x86_64__
-#define TINY_HEAP_SIZE 0x8004
-#endif
-#define PTRSIZE ((size_t) sizeof(void *))
-#define HEADER_SIZE ((size_t) sizeof(Header))
 #define HEAP_LIMIT 10000
-#define ALIGN(x,a) (((x) + ((a) - 1)) & ~((a) - 1))
-#define NEXT_HEADER(x) ((Header *)((size_t)(x+1) + x->size))
 
-/* flags */
-#define FL_ALLOC ((size_t)0x1)
-#define FL_MARK ((size_t)0x2)
+#define PTRSIZE (sizeof(void *))
+#define HEADER_SIZE (sizeof(header_t))
+#define ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
+#define NEXT_HEADER(x) ((header_t *)((size_t)(x + 1) + x->size))
 
-#define FL_SET(x, f) (((Header *)x)->flags |= f)
-#define FL_UNSET(x, f) (((Header *)x)->flags &= ~(f))
-#define FL_TEST(x, f) (((Header *)x)->flags & f)
+#define FL_ALLOC ((size_t)0b01)
+#define FL_MARK  ((size_t)0b10)
 
-static Header *free_list = NULL;
-static GC_Heap gc_heaps[HEAP_LIMIT];
-static size_t gc_heaps_used = 0;
+#define FL_SET(x, f)   (((header_t *)x)->flags |=  (f))
+#define FL_UNSET(x, f) (((header_t *)x)->flags &= ~(f))
+#define FL_TEST(x, f)  (((header_t *)x)->flags &   (f))
 
-static void minigc_join_freelist(Header * target);
-static GC_Heap *is_pointer_to_heap(void *ptr);
+static header_t *free_list = NULL;
+static heap_t heaps[HEAP_LIMIT];
+static size_t heaps_used = 0;
 
-static Header *add_heap(size_t req_size)
+static void join_freelist(header_t * target);
+static heap_t *is_pointer_to_heap(void *ptr);
+
+static header_t *add_heap(size_t req_size)
 {
 	void *p;
-	Header *align_p;
+	header_t *align_p;
 
-	if (gc_heaps_used >= HEAP_LIMIT) {
+	if (heaps_used >= HEAP_LIMIT) {
 		fputs("OutOfMemory Error", stderr);
 		abort();
 	}
@@ -76,55 +70,49 @@ static Header *add_heap(size_t req_size)
 		req_size += HEADER_SIZE;
 	}
 
-#ifdef WIN32
-	if ((p = (void *)malloc(req_size + PTRSIZE + HEADER_SIZE)) == NULL) {
-		return NULL;
-	}
-#else
+#if defined(HAVE_SBRK)
 	if ((p = sbrk(req_size + PTRSIZE + HEADER_SIZE)) == (void *)-1) {
 		return NULL;
 	}
-#endif				/* WIN32 */
+#else
+	// FIXME: Emulate sbrk() by VirtualAlloc() and VirtualFree() is better on windows?
+	//        http://www.genesys-e.org/jwalter//mix4win.htm
+	if ((p = (void *)malloc(req_size + PTRSIZE + HEADER_SIZE)) == NULL) {
+		return NULL;
+	}
+#endif
 
 	memset(p, 0, req_size + PTRSIZE + HEADER_SIZE);
-
-	/* address alignment */
-	align_p = gc_heaps[gc_heaps_used].slot =
-	    (Header *) ALIGN((size_t) p, PTRSIZE);
-	req_size = gc_heaps[gc_heaps_used].size = req_size;
-	align_p->size = (req_size - HEADER_SIZE);
+	align_p = heaps[heaps_used].slot =
+	    (header_t *) ALIGN((size_t) p, PTRSIZE);
+	req_size = heaps[heaps_used].size = req_size;
+	align_p->size = req_size - HEADER_SIZE;
 	align_p->next_free = align_p;
 	align_p->flags = 0;
-
-	gc_heaps_used++;
+	heaps_used++;
 
 	return align_p;
 }
 
-static Header *grow(size_t req_size)
+static header_t *grow(size_t req_size)
 {
-	Header *cp, *up;
+	header_t *p;
 
-	if (!(cp = add_heap(req_size))) {
+	if (!(p = add_heap(req_size))) {
 		return NULL;
 	}
-
-	up = (Header *) cp;
-	minigc_join_freelist(up);
+	join_freelist(p);
 
 	return free_list;
 }
 
 void *minigc_malloc(size_t req_size)
 {
-	Header *p, *prevp;
-	size_t do_gc = 0;
+	header_t *p, *prevp;
+	bool do_gcollect = false;
 
 	req_size = ALIGN(req_size, PTRSIZE);
 
-	if (req_size <= 0) {
-		return NULL;
-	}
 	if ((prevp = free_list) == NULL) {
 		if (!(p = add_heap(TINY_HEAP_SIZE))) {
 			return NULL;
@@ -132,9 +120,7 @@ void *minigc_malloc(size_t req_size)
 		prevp = free_list = p;
 	}
 	for (p = prevp->next_free;; prevp = p, p = p->next_free) {
-		if (p->size == req_size)
-			/* just fit */
-		{
+		if (p->size == req_size) {
 			prevp->next_free = p->next_free;
 
 			free_list = prevp;
@@ -159,9 +145,9 @@ void *minigc_malloc(size_t req_size)
 		}
 
 		if (p == free_list) {
-			if (!do_gc) {
-				garbage_collect();
-				do_gc = 1;
+			if (!do_gcollect) {
+				minigc_gcollect();
+				do_gcollect = true;
 			} else if ((p = grow(req_size)) == NULL) {
 				return NULL;
 			}
@@ -171,20 +157,23 @@ void *minigc_malloc(size_t req_size)
 
 void *minigc_realloc(void *ptr, size_t req_size)
 {
-	Header *hdr = NULL;
-	void *p = NULL;
+	void *p;
 
-	p = (void *)minigc_malloc(req_size);
-
-	if (ptr != NULL) {
-		hdr = (Header *) ptr - 1;
-
-		if (hdr->size > req_size) {
-			memcpy(p, ptr, req_size);
-		} else {
-			memcpy(p, ptr, hdr->size);
+	if (ptr == NULL) {
+		p = minigc_malloc(req_size);
+	} else if (req_size == 0 && ptr != NULL) {
+		// FIXME: configure being lazy internal minigc_free().
+		minigc_free(ptr);
+		p = NULL;
+	} else {
+		p = minigc_malloc(req_size);
+		if (p != NULL) {
+			const header_t *hdr = (header_t *) ptr - 1;
+			memcpy(p, ptr,
+			       (hdr->size < req_size) ? hdr->size : req_size);
+			// FIXME: configure being lazy internal minigc_free().
+			minigc_free(ptr);
 		}
-		/* minigc_free(ptr); */
 	}
 
 	return p;
@@ -192,23 +181,23 @@ void *minigc_realloc(void *ptr, size_t req_size)
 
 void minigc_free(void *ptr)
 {
-	Header *target = NULL;
+	header_t *target = NULL;
 
-	target = (Header *) ptr - 1;
+	target = (header_t *) ptr - 1;
 
 	/* check if ptr is valid */
 	if (!is_pointer_to_heap(ptr) || !FL_TEST(target, FL_ALLOC)) {
 		return;
 	}
 
-	minigc_join_freelist(target);
+	join_freelist(target);
 
 	target->flags = 0;
 }
 
-static void minigc_join_freelist(Header * target)
+static void join_freelist(header_t * target)
 {
-	Header *hit = NULL;
+	header_t *hit = NULL;
 
 	/* search join point of target to free_list */
 	for (hit = free_list; !(target > hit && target < hit->next_free);
@@ -239,50 +228,47 @@ static void minigc_join_freelist(Header * target)
 	free_list = hit;
 }
 
-/* ========================================================================== */
-/*  minigc                                                                   */
-/* ========================================================================== */
-
 struct root_range {
 	void *start;
 	void *end;
 };
 
 #define IS_MARKED(x) (FL_TEST(x, FL_ALLOC) && FL_TEST(x, FL_MARK))
+
+// FIXME: Set default on configure.
+// FIXME: Enable runtime tuning on init.
 #define ROOT_RANGES_LIMIT 1000
 
 static struct root_range root_ranges[ROOT_RANGES_LIMIT];
 static size_t root_ranges_used = 0;
 static void *stack_start = NULL;
 static void *stack_end = NULL;
-static GC_Heap *hit_cache = NULL;
+static heap_t *hit_cache = NULL;
 
-static GC_Heap *is_pointer_to_heap(void *ptr)
+static heap_t *is_pointer_to_heap(void *ptr)
 {
-	size_t i;
-
 	if (hit_cache &&
 	    ((void *)hit_cache->slot) <= ptr &&
 	    (size_t) ptr < (((size_t) hit_cache->slot) + hit_cache->size)) {
 		return hit_cache;
 	}
 
-	for (i = 0; i < gc_heaps_used; i++) {
-		if ((((void *)gc_heaps[i].slot) <= ptr) &&
+	for (size_t i = 0; i < heaps_used; i++) {
+		if ((((void *)heaps[i].slot) <= ptr) &&
 		    ((size_t) ptr <
-		     (((size_t) gc_heaps[i].slot) + gc_heaps[i].size))) {
-			hit_cache = &gc_heaps[i];
-			return &gc_heaps[i];
+		     (((size_t) heaps[i].slot) + heaps[i].size))) {
+			hit_cache = &heaps[i];
+			return &heaps[i];
 		}
 	}
 	return NULL;
 }
 
-static Header *get_header(GC_Heap * gh, void *ptr)
+static header_t *get_header(heap_t * gh, void *ptr)
 {
-	Header *p, *pend, *pnext;
+	header_t *p, *pend, *pnext;
 
-	pend = (Header *) (((size_t) gh->slot) + gh->size);
+	pend = (header_t *) (((size_t) gh->slot) + gh->size);
 	for (p = gh->slot; p < pend; p = pnext) {
 		pnext = NEXT_HEADER(p);
 		if ((void *)(p + 1) <= ptr && ptr < (void *)pnext) {
@@ -292,7 +278,7 @@ static Header *get_header(GC_Heap * gh, void *ptr)
 	return NULL;
 }
 
-void gc_init(void)
+void minigc_init(void)
 {
 	long dummy;
 
@@ -305,7 +291,6 @@ void gc_init(void)
 
 static void set_stack_end(void)
 {
-	void *tmp;
 	long dummy;
 
 	/* referenced bdw-gc mark_rts.c */
@@ -314,12 +299,12 @@ static void set_stack_end(void)
 	stack_end = (void *)&dummy;
 }
 
-static void gc_mark_range(void *start, void *end);
+static void mark_range(void *start, void *end);
 
-static void gc_mark(void *ptr)
+static void mark(void *ptr)
 {
-	GC_Heap *gh;
-	Header *hdr;
+	heap_t *gh;
+	header_t *hdr;
 
 	/* mark check */
 	if (!(gh = is_pointer_to_heap(ptr))) {
@@ -340,48 +325,41 @@ static void gc_mark(void *ptr)
 	DEBUG(printf("mark ptr : %p, header : %p\n", ptr, hdr));
 
 	/* mark children */
-	gc_mark_range((void *)(hdr + 1), (void *)NEXT_HEADER(hdr));
+	mark_range((void *)(hdr + 1), (void *)NEXT_HEADER(hdr));
 }
 
-static void gc_mark_range(void *start, void *end)
+static void mark_range(void *start, void *end)
 {
-	void *p;
-
-	for (p = start; p < end; p++) {
-		gc_mark(*(void **)p);
+	for (void *p = start; p < end; p++) {
+		mark(*(void **)p);
 	}
 }
 
-static void gc_mark_register(void)
+static void mark_register(void)
 {
 	jmp_buf env;
-	size_t i;
-
 	setjmp(env);
-	for (i = 0; i < sizeof(env); i++) {
-		gc_mark(((void **)env)[i]);
+	for (size_t i = 0; i < sizeof(env); i++) {
+		mark(((void **)env)[i]);
 	}
 }
 
-static void gc_mark_stack(void)
+static void mark_stack(void)
 {
 	set_stack_end();
 	if (stack_start > stack_end) {
-		gc_mark_range(stack_end, stack_start);
+		mark_range(stack_end, stack_start);
 	} else {
-		gc_mark_range(stack_start, stack_end);
+		mark_range(stack_start, stack_end);
 	}
 }
 
-static void gc_sweep(void)
+static void sweep(void)
 {
-	size_t i;
-	Header *p, *pend, *pnext;
-
-	for (i = 0; i < gc_heaps_used; i++) {
-		pend =
-		    (Header *) (((size_t) gc_heaps[i].slot) + gc_heaps[i].size);
-		for (p = gc_heaps[i].slot; p < pend; p = NEXT_HEADER(p)) {
+	for (size_t i = 0; i < heaps_used; i++) {
+		header_t *pend =
+		    (header_t *) (((size_t) heaps[i].slot) + heaps[i].size);
+		for (header_t * p = heaps[i].slot; p < pend; p = NEXT_HEADER(p)) {
 			if (FL_TEST(p, FL_ALLOC)) {
 				if (FL_TEST(p, FL_MARK)) {
 					DEBUG(printf("mark unset : %p\n", p));
@@ -394,7 +372,7 @@ static void gc_sweep(void)
 	}
 }
 
-void add_roots(void *start, void *end)
+void minigc_add_roots(void *start, void *end)
 {
 	void *tmp;
 	if (start > end) {
@@ -412,82 +390,68 @@ void add_roots(void *start, void *end)
 	}
 }
 
-void garbage_collect(void)
+void minigc_gcollect(void)
 {
-	size_t i;
-
 	/* marking machine context */
-	gc_mark_register();
-	gc_mark_stack();
+	mark_register();
+	mark_stack();
 
 	/* marking roots */
-	for (i = 0; i < root_ranges_used; i++) {
-		gc_mark_range(root_ranges[i].start, root_ranges[i].end);
+	for (size_t i = 0; i < root_ranges_used; i++) {
+		mark_range(root_ranges[i].start, root_ranges[i].end);
 	}
 
-	/* sweeping */
-	gc_sweep();
+	sweep();
 }
 
 #ifdef DO_TEST
-/* ========================================================================== */
-/* test                                                                       */
-/* ========================================================================== */
-
+// FIXME: Add test for minigc_realloc().
 static void test_minigc_malloc_free(void)
 {
-	void *p1, *p2, *p3;
+	void *p1 = (void *)minigc_malloc(10);
+	void *p2 = (void *)minigc_malloc(10);
+	void *p3 = (void *)minigc_malloc(10);
+	assert(((header_t *) p1 - 1)->size == ALIGN(10, PTRSIZE));
+	assert(((header_t *) p1 - 1)->flags == FL_ALLOC);
+	assert((header_t *) (((size_t) (free_list + 1)) + free_list->size) ==
+	       ((header_t *) p3 - 1));
 
-	/* malloc check */
-	p1 = (void *)minigc_malloc(10);
-	p2 = (void *)minigc_malloc(10);
-	p3 = (void *)minigc_malloc(10);
-	assert(((Header *) p1 - 1)->size == ALIGN(10, PTRSIZE));
-	assert(((Header *) p1 - 1)->flags == FL_ALLOC);
-	assert((Header *) (((size_t) (free_list + 1)) + free_list->size) ==
-	       ((Header *) p3 - 1));
-
-	/* free check */
 	minigc_free(p1);
 	minigc_free(p3);
 	minigc_free(p2);
 	assert(free_list->next_free == free_list);
-	assert((void *)gc_heaps[0].slot == (void *)free_list);
-	//FIXME: assert(gc_heaps[0].size == TINY_HEAP_SIZE);
-	assert(((Header *) p1 - 1)->flags == 0);
+	assert((void *)heaps[0].slot == (void *)free_list);
+	// FIXME: assert(heaps[0].size == TINY_HEAP_SIZE);
+	assert(((header_t *) p1 - 1)->flags == 0);
 
-	/* grow check */
-	p1 = minigc_malloc(0x4000 + 80);
-	assert(gc_heaps_used == 2);
-	//FIXME: assert(gc_heaps[1].size == (TINY_HEAP_SIZE + 80));
+	p1 = minigc_malloc(TINY_HEAP_SIZE + 80);
+	assert(heaps_used == 2);
+	// FIXME: assert(heaps[1].size == (TINY_HEAP_SIZE + 80));
 	minigc_free(p1);
 }
 
 static void test_garbage_collect(void)
 {
-	void *p;
-
-	p = minigc_malloc(100);
-	assert(FL_TEST((((Header *) p) - 1), FL_ALLOC));
-	p = 0;
-	garbage_collect();
+	void *p = minigc_malloc(100);
+	assert(FL_TEST((((header_t *) p) - 1), FL_ALLOC));
+	p = NULL;
+	minigc_gcollect();
 }
 
 static void test_garbage_collect_load_test(void)
 {
 	void *p;
-	int i;
 
-	for (i = 0; i < 2000; i++) {
+	for (size_t i = 0; i < 2000; i++) {
 		p = minigc_malloc(100);
 	}
-	assert((((Header *) p) - 1)->flags);
+	assert((((header_t *) p) - 1)->flags);
 	assert(stack_end != stack_start);
 }
 
 static void test(void)
 {
-	gc_init();
+	minigc_init();
 
 	test_minigc_malloc_free();
 	test_garbage_collect();
