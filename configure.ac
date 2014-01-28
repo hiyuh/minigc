@@ -1,6 +1,9 @@
 AC_PREREQ([2.69])
 AC_INIT([minigc], [0.0.1], [Narihiro Nakamura <authornari@gmail.com>])
 AM_INIT_AUTOMAKE([1.14])
+LT_PREREQ([2.4])
+LT_INIT
+AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_SRCDIR([minigc.c])
 AC_CONFIG_HEADERS([config.h])
 
